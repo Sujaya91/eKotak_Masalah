@@ -1,0 +1,1523 @@
+<!doctype html>
+<html lang="id" class="h-full">
+ <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>E-Kotak Kasus</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script src="/_sdk/data_sdk.js"></script>
+  <script src="/_sdk/element_sdk.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <style>
+    * { font-family: 'Quicksand', sans-serif; }
+    .pastel-gradient { background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 50%, #ffecd2 100%); }
+    .pastel-card { background: linear-gradient(145deg, #fff5f5 0%, #fef3e2 100%); }
+    .pastel-btn { background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%); }
+    .pastel-btn-secondary { background: linear-gradient(135deg, #d299c2 0%, #fef9d7 100%); }
+    .pastel-sidebar { background: linear-gradient(180deg, #ffecd2 0%, #fcb69f 100%); }
+    .toast { animation: slideIn 0.3s ease-out; }
+    @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    .fade-in { animation: fadeIn 0.3s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    input:focus, select:focus, textarea:focus { outline: none; box-shadow: 0 0 0 3px rgba(252, 182, 159, 0.5); }
+    .scrollbar-hide::-webkit-scrollbar { display: none; }
+    .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+  </style>
+  <style>body { box-sizing: border-box; }</style>
+ </head>
+ <body class="h-full bg-gradient-to-br from-orange-50 via-pink-50 to-purple-50 overflow-auto">
+  <div id="app" class="h-full w-full"></div>
+  <script>
+    // State Management
+    let allData = [];
+    let currentUser = null;
+    let currentView = 'login';
+    let adminMenu = 'beranda';
+    let studentMenu = 'beranda';
+    let formTemplate = [];
+    let settings = { institutionName: 'SMA Negeri 1 Contoh', teacherName: 'Nama Guru BK', teacherNip: '1234567890' };
+
+    const defaultConfig = {
+      app_title: 'E-Kotak Kasus',
+      primary_color: '#fcb69f',
+      secondary_color: '#ffecd2',
+      text_color: '#5d4e37',
+      accent_color: '#a8edea',
+      surface_color: '#ffffff'
+    };
+
+    let config = { ...defaultConfig };
+
+    // Initialize SDKs
+    async function initApp() {
+      const dataHandler = {
+        onDataChanged(data) {
+          allData = data;
+          renderCurrentView();
+        }
+      };
+
+      const result = await window.dataSdk.init(dataHandler);
+      if (!result.isOk) {
+        console.error('Failed to initialize data SDK');
+      }
+
+      if (window.elementSdk) {
+        window.elementSdk.init({
+          defaultConfig,
+          onConfigChange: async (newConfig) => {
+            config = { ...defaultConfig, ...newConfig };
+            renderCurrentView();
+          },
+          mapToCapabilities: (cfg) => ({
+            recolorables: [
+              { get: () => cfg.primary_color || defaultConfig.primary_color, set: (v) => window.elementSdk.setConfig({ primary_color: v }) },
+              { get: () => cfg.secondary_color || defaultConfig.secondary_color, set: (v) => window.elementSdk.setConfig({ secondary_color: v }) },
+              { get: () => cfg.text_color || defaultConfig.text_color, set: (v) => window.elementSdk.setConfig({ text_color: v }) },
+              { get: () => cfg.accent_color || defaultConfig.accent_color, set: (v) => window.elementSdk.setConfig({ accent_color: v }) },
+              { get: () => cfg.surface_color || defaultConfig.surface_color, set: (v) => window.elementSdk.setConfig({ surface_color: v }) }
+            ],
+            borderables: [],
+            fontEditable: undefined,
+            fontSizeable: undefined
+          }),
+          mapToEditPanelValues: (cfg) => new Map([
+            ['app_title', cfg.app_title || defaultConfig.app_title]
+          ])
+        });
+      }
+
+      loadSettings();
+      loadTemplate();
+      renderCurrentView();
+    }
+
+    // Helper Functions
+    function getStudents() {
+      return allData.filter(d => d.type === 'student');
+    }
+
+    function getReports() {
+      return allData.filter(d => d.type === 'report');
+    }
+
+    function getActivities() {
+      return allData.filter(d => d.type === 'activity').sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    }
+
+    function loadSettings() {
+      const settingsData = allData.find(d => d.type === 'settings');
+      if (settingsData) {
+        settings = {
+          institutionName: settingsData.institutionName || settings.institutionName,
+          teacherName: settingsData.teacherName || settings.teacherName,
+          teacherNip: settingsData.teacherNip || settings.teacherNip
+        };
+      }
+    }
+
+    function loadTemplate() {
+      const templateData = allData.find(d => d.type === 'template');
+      if (templateData && templateData.templateFields) {
+        try {
+          formTemplate = JSON.parse(templateData.templateFields);
+        } catch (e) {
+          formTemplate = [];
+        }
+      }
+    }
+
+    async function logActivity(description) {
+      if (allData.length >= 999) return;
+      await window.dataSdk.create({
+        type: 'activity',
+        activityType: 'log',
+        activityDescription: description,
+        createdAt: new Date().toISOString()
+      });
+    }
+
+    function showToast(message, type = 'success') {
+      const toast = document.createElement('div');
+      toast.className = `toast fixed top-4 right-4 px-6 py-3 rounded-xl shadow-lg z-50 ${type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`;
+      toast.textContent = message;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 3000);
+    }
+
+    function formatDate(dateStr) {
+      if (!dateStr) return '-';
+      const date = new Date(dateStr);
+      return date.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    }
+
+    // Render Functions
+    function renderCurrentView() {
+      loadSettings();
+      loadTemplate();
+      const app = document.getElementById('app');
+      
+      if (currentView === 'login') {
+        app.innerHTML = renderLoginPage();
+      } else if (currentView === 'register') {
+        app.innerHTML = renderRegisterPage();
+      } else if (currentView === 'admin') {
+        app.innerHTML = renderAdminDashboard();
+      } else if (currentView === 'student') {
+        app.innerHTML = renderStudentDashboard();
+      }
+    }
+
+    function renderLoginPage() {
+      return `
+        <div class="min-h-full flex items-center justify-center p-4">
+          <div class="w-full max-w-md">
+            <div class="pastel-card rounded-3xl shadow-2xl p-8 fade-in">
+              <div class="text-center mb-8">
+                <div class="w-20 h-20 mx-auto mb-4 rounded-full pastel-gradient flex items-center justify-center shadow-lg">
+                  <span class="text-3xl">📮</span>
+                </div>
+                <h1 class="text-2xl font-bold text-amber-800">${config.app_title || 'E-Kotak Kasus'}</h1>
+                <p class="text-amber-600 mt-2">Layanan Bimbingan & Konseling</p>
+              </div>
+              
+              <div class="space-y-4">
+                <div>
+                  <label class="block text-sm font-medium text-amber-700 mb-2">Username</label>
+                  <input type="text" id="loginUsername" class="w-full px-4 py-3 rounded-xl border-2 border-orange-200 bg-white/80 focus:border-orange-400 transition" placeholder="Masukkan username">
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-amber-700 mb-2">Password</label>
+                  <input type="password" id="loginPassword" class="w-full px-4 py-3 rounded-xl border-2 border-orange-200 bg-white/80 focus:border-orange-400 transition" placeholder="Masukkan password">
+                </div>
+                
+                <button onclick="handleLogin()" class="w-full py-3 pastel-btn rounded-xl font-semibold text-amber-800 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 transition-all">
+                  🔓 Masuk
+                </button>
+                
+                <div class="text-center pt-4 border-t border-orange-200">
+                  <p class="text-amber-600 text-sm mb-3">Belum punya akun?</p>
+                  <button onclick="currentView='register'; renderCurrentView();" class="text-orange-600 font-semibold hover:text-orange-800 transition">
+                    📝 Daftar Sebagai Siswa
+                  </button>
+                </div>
+              </div>
+              
+
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderRegisterPage() {
+      return `
+        <div class="min-h-full flex items-center justify-center p-4">
+          <div class="w-full max-w-md">
+            <div class="pastel-card rounded-3xl shadow-2xl p-8 fade-in">
+              <div class="text-center mb-6">
+                <div class="w-16 h-16 mx-auto mb-4 rounded-full pastel-gradient flex items-center justify-center shadow-lg">
+                  <span class="text-2xl">📝</span>
+                </div>
+                <h1 class="text-2xl font-bold text-amber-800">Pendaftaran Siswa</h1>
+                <p class="text-amber-600 mt-2">Isi data sesuai daftar hadir</p>
+              </div>
+              
+              <div class="space-y-4">
+                <div>
+                  <label class="block text-sm font-medium text-amber-700 mb-2">Nama Lengkap *</label>
+                  <input type="text" id="regFullName" class="w-full px-4 py-3 rounded-xl border-2 border-orange-200 bg-white/80" placeholder="Sesuai daftar hadir">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                  <div>
+                    <label class="block text-sm font-medium text-amber-700 mb-2">Kelas *</label>
+                    <input type="text" id="regClass" class="w-full px-4 py-3 rounded-xl border-2 border-orange-200 bg-white/80" placeholder="Contoh: X-1, XI-IPA-2">
+                  </div>
+                  <div>
+                    <label class="block text-sm font-medium text-amber-700 mb-2">No. Absen *</label>
+                    <input type="number" id="regAbsent" class="w-full px-4 py-3 rounded-xl border-2 border-orange-200 bg-white/80" placeholder="1-40">
+                  </div>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-amber-700 mb-2">Nomor WhatsApp *</label>
+                  <input type="text" id="regWhatsapp" class="w-full px-4 py-3 rounded-xl border-2 border-orange-200 bg-white/80" placeholder="628xxxxxxxxx">
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-amber-700 mb-2">Username *</label>
+                  <input type="text" id="regUsername" class="w-full px-4 py-3 rounded-xl border-2 border-orange-200 bg-white/80" placeholder="Buat username">
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-amber-700 mb-2">Password *</label>
+                  <input type="password" id="regPassword" class="w-full px-4 py-3 rounded-xl border-2 border-orange-200 bg-white/80" placeholder="Min. 6 karakter">
+                </div>
+                
+                <button onclick="handleRegister()" class="w-full py-3 pastel-btn rounded-xl font-semibold text-amber-800 shadow-lg hover:shadow-xl transition-all">
+                  ✅ Daftar Sekarang
+                </button>
+                
+                <button onclick="currentView='login'; renderCurrentView();" class="w-full py-3 bg-white/50 rounded-xl font-medium text-amber-700 hover:bg-white/80 transition">
+                  ← Kembali ke Login
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderAdminDashboard() {
+      return `
+        <div class="flex h-full">
+          <!-- Sidebar -->
+          <div class="w-64 pastel-sidebar shadow-xl flex flex-col">
+            <div class="p-6 border-b border-orange-300/50">
+              <div class="flex items-center gap-3">
+                <div class="w-12 h-12 rounded-full bg-white/80 flex items-center justify-center shadow">
+                  <span class="text-2xl">👩‍🏫</span>
+                </div>
+                <div>
+                  <h2 class="font-bold text-amber-800">Guru BK</h2>
+                  <p class="text-xs text-amber-600">Administrator</p>
+                </div>
+              </div>
+            </div>
+            
+            <nav class="flex-1 p-4 space-y-2">
+              ${renderAdminMenuItem('beranda', '🏠', 'Beranda')}
+              ${renderAdminMenuItem('template', '📋', 'Template Form')}
+              ${renderAdminMenuItem('siswa', '👥', 'Data Siswa')}
+              ${renderAdminMenuItem('laporan', '📑', 'Daftar Laporan')}
+              ${renderAdminMenuItem('pengaturan', '⚙️', 'Pengaturan')}
+            </nav>
+            
+            <div class="p-4 border-t border-orange-300/50">
+              <button onclick="handleLogout()" class="w-full py-2 bg-white/50 rounded-xl text-amber-700 font-medium hover:bg-white/80 transition">
+                🚪 Keluar
+              </button>
+            </div>
+          </div>
+          
+          <!-- Main Content -->
+          <div class="flex-1 overflow-auto p-6">
+            ${renderAdminContent()}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderAdminMenuItem(id, icon, label) {
+      const isActive = adminMenu === id;
+      return `
+        <button onclick="adminMenu='${id}'; renderCurrentView();" 
+          class="w-full flex items-center gap-3 px-4 py-3 rounded-xl transition ${isActive ? 'bg-white/80 shadow-lg text-amber-800' : 'text-amber-700 hover:bg-white/50'}">
+          <span class="text-lg">${icon}</span>
+          <span class="font-medium">${label}</span>
+        </button>
+      `;
+    }
+
+    function renderAdminContent() {
+      switch (adminMenu) {
+        case 'beranda': return renderAdminBeranda();
+        case 'template': return renderAdminTemplate();
+        case 'siswa': return renderAdminSiswa();
+        case 'laporan': return renderAdminLaporan();
+        case 'pengaturan': return renderAdminPengaturan();
+        default: return renderAdminBeranda();
+      }
+    }
+
+    function renderAdminBeranda() {
+      const reports = getReports();
+      const students = getStudents();
+      const activities = getActivities().slice(0, 3);
+      const recentReports = reports.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 5);
+      const pendingReports = reports.filter(r => r.status !== 'handled').length;
+
+      return `
+        <div class="fade-in space-y-6">
+          <div class="flex items-center justify-between">
+            <div>
+              <h1 class="text-2xl font-bold text-amber-800">Selamat Datang, Guru BK! 👋</h1>
+              <p class="text-amber-600">${settings.institutionName}</p>
+            </div>
+            <div class="text-right">
+              <p class="text-sm text-amber-600">${new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
+            </div>
+          </div>
+          
+          <!-- Stats -->
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div class="pastel-card rounded-2xl p-5 shadow-lg">
+              <div class="flex items-center gap-4">
+                <div class="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center">
+                  <span class="text-2xl">👥</span>
+                </div>
+                <div>
+                  <p class="text-2xl font-bold text-amber-800">${students.length}</p>
+                  <p class="text-sm text-amber-600">Siswa Terdaftar</p>
+                </div>
+              </div>
+            </div>
+            <div class="pastel-card rounded-2xl p-5 shadow-lg">
+              <div class="flex items-center gap-4">
+                <div class="w-12 h-12 rounded-xl bg-green-100 flex items-center justify-center">
+                  <span class="text-2xl">📑</span>
+                </div>
+                <div>
+                  <p class="text-2xl font-bold text-amber-800">${reports.length}</p>
+                  <p class="text-sm text-amber-600">Total Laporan</p>
+                </div>
+              </div>
+            </div>
+            <div class="pastel-card rounded-2xl p-5 shadow-lg">
+              <div class="flex items-center gap-4">
+                <div class="w-12 h-12 rounded-xl bg-yellow-100 flex items-center justify-center">
+                  <span class="text-2xl">⏳</span>
+                </div>
+                <div>
+                  <p class="text-2xl font-bold text-amber-800">${pendingReports}</p>
+                  <p class="text-sm text-amber-600">Belum Ditangani</p>
+                </div>
+              </div>
+            </div>
+            <div class="pastel-card rounded-2xl p-5 shadow-lg">
+              <div class="flex items-center gap-4">
+                <div class="w-12 h-12 rounded-xl bg-purple-100 flex items-center justify-center">
+                  <span class="text-2xl">✅</span>
+                </div>
+                <div>
+                  <p class="text-2xl font-bold text-amber-800">${reports.length - pendingReports}</p>
+                  <p class="text-sm text-amber-600">Sudah Ditangani</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Info Card -->
+          <div class="pastel-card rounded-2xl p-6 shadow-lg">
+            <h3 class="font-bold text-amber-800 mb-3 flex items-center gap-2">
+              <span>📮</span> Tentang E-Kotak Kasus
+            </h3>
+            <p class="text-amber-700 leading-relaxed">
+              <strong>E-Kotak Kasus</strong> adalah aplikasi digital untuk menampung laporan kasus siswa secara aman dan rahasia. 
+              Aplikasi ini memudahkan siswa melaporkan permasalahan yang dialami kepada Guru BK tanpa harus bertatap muka langsung.
+              Semua laporan akan ditangani secara profesional dengan menjunjung tinggi kerahasiaan identitas pelapor.
+            </p>
+          </div>
+          
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Recent Reports -->
+            <div class="pastel-card rounded-2xl p-6 shadow-lg">
+              <h3 class="font-bold text-amber-800 mb-4 flex items-center gap-2">
+                <span>🔔</span> 5 Laporan Terakhir
+              </h3>
+              <div class="space-y-3">
+                ${recentReports.length === 0 ? '<p class="text-amber-600 text-center py-4">Belum ada laporan</p>' : 
+                  recentReports.map(r => `
+                    <div class="flex items-center justify-between p-3 bg-white/50 rounded-xl">
+                      <div>
+                        <p class="font-medium text-amber-800">${r.reporterName || 'Anonim'}</p>
+                        <p class="text-xs text-amber-600">${r.reporterClass || '-'} • ${formatDate(r.createdAt)}</p>
+                      </div>
+                      <span class="px-3 py-1 rounded-full text-xs font-medium ${r.status === 'handled' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}">
+                        ${r.status === 'handled' ? '✓ Ditangani' : '⏳ Pending'}
+                      </span>
+                    </div>
+                  `).join('')}
+              </div>
+            </div>
+            
+            <!-- Recent Activities -->
+            <div class="pastel-card rounded-2xl p-6 shadow-lg">
+              <h3 class="font-bold text-amber-800 mb-4 flex items-center gap-2">
+                <span>📊</span> 3 Aktivitas Terakhir
+              </h3>
+              <div class="space-y-3">
+                ${activities.length === 0 ? '<p class="text-amber-600 text-center py-4">Belum ada aktivitas</p>' : 
+                  activities.map(a => `
+                    <div class="p-3 bg-white/50 rounded-xl">
+                      <p class="font-medium text-amber-800">${a.activityDescription}</p>
+                      <p class="text-xs text-amber-600">${formatDate(a.createdAt)}</p>
+                    </div>
+                  `).join('')}
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderAdminTemplate() {
+      return `
+        <div class="fade-in space-y-6">
+          <div class="flex items-center justify-between">
+            <div>
+              <h1 class="text-2xl font-bold text-amber-800">📋 Template Form Laporan</h1>
+              <p class="text-amber-600">Atur field yang akan diisi oleh siswa</p>
+            </div>
+          </div>
+          
+          <div class="pastel-card rounded-2xl p-6 shadow-lg">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="font-bold text-amber-800">Daftar Field</h3>
+              <button onclick="addTemplateField()" class="px-4 py-2 pastel-btn rounded-xl font-medium text-amber-800 shadow hover:shadow-lg transition">
+                + Tambah Field
+              </button>
+            </div>
+            
+            <div id="templateFields" class="space-y-4">
+              ${formTemplate.length === 0 ? `
+                <div class="text-center py-8 text-amber-600">
+                  <p class="text-4xl mb-3">📝</p>
+                  <p>Belum ada field. Klik "Tambah Field" untuk memulai.</p>
+                </div>
+              ` : formTemplate.map((field, index) => `
+                <div class="p-4 bg-white/50 rounded-xl border-2 border-orange-200">
+                  <div class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                    <div>
+                      <label class="block text-sm font-medium text-amber-700 mb-1">Label Field</label>
+                      <input type="text" value="${field.label}" onchange="updateTemplateField(${index}, 'label', this.value)"
+                        class="w-full px-3 py-2 rounded-lg border border-orange-200 bg-white">
+                    </div>
+                    <div>
+                      <label class="block text-sm font-medium text-amber-700 mb-1">Tipe Input</label>
+                      <select onchange="updateTemplateField(${index}, 'type', this.value)"
+                        class="w-full px-3 py-2 rounded-lg border border-orange-200 bg-white">
+                        <option value="text" ${field.type === 'text' ? 'selected' : ''}>Teks Singkat</option>
+                        <option value="textarea" ${field.type === 'textarea' ? 'selected' : ''}>Teks Panjang</option>
+                        <option value="select" ${field.type === 'select' ? 'selected' : ''}>Pilihan</option>
+                        <option value="date" ${field.type === 'date' ? 'selected' : ''}>Tanggal</option>
+                        <option value="number" ${field.type === 'number' ? 'selected' : ''}>Angka</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label class="block text-sm font-medium text-amber-700 mb-1">Opsi (pisah koma)</label>
+                      <input type="text" value="${field.options || ''}" onchange="updateTemplateField(${index}, 'options', this.value)"
+                        class="w-full px-3 py-2 rounded-lg border border-orange-200 bg-white" 
+                        placeholder="Untuk tipe pilihan" ${field.type !== 'select' ? 'disabled' : ''}>
+                    </div>
+                    <div class="flex gap-2">
+                      <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" ${field.required ? 'checked' : ''} onchange="updateTemplateField(${index}, 'required', this.checked)"
+                          class="w-4 h-4 rounded border-orange-300">
+                        <span class="text-sm text-amber-700">Wajib</span>
+                      </label>
+                      <button onclick="removeTemplateField(${index})" class="px-3 py-2 bg-red-100 text-red-600 rounded-lg hover:bg-red-200 transition">
+                        🗑️
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+            
+            <div class="mt-6 flex justify-end">
+              <button onclick="saveTemplate()" class="px-6 py-3 pastel-btn rounded-xl font-semibold text-amber-800 shadow-lg hover:shadow-xl transition">
+                💾 Simpan Template
+              </button>
+            </div>
+          </div>
+          
+          <!-- Preview -->
+          <div class="pastel-card rounded-2xl p-6 shadow-lg">
+            <h3 class="font-bold text-amber-800 mb-4">👁️ Preview Form</h3>
+            <div class="p-4 bg-white/50 rounded-xl">
+              ${formTemplate.length === 0 ? '<p class="text-center text-amber-600">Tambahkan field untuk melihat preview</p>' :
+                formTemplate.map(field => `
+                  <div class="mb-4">
+                    <label class="block text-sm font-medium text-amber-700 mb-2">${field.label} ${field.required ? '<span class="text-red-500">*</span>' : ''}</label>
+                    ${field.type === 'textarea' ? 
+                      `<textarea class="w-full px-3 py-2 rounded-lg border border-orange-200 bg-white" rows="3" disabled></textarea>` :
+                    field.type === 'select' ?
+                      `<select class="w-full px-3 py-2 rounded-lg border border-orange-200 bg-white" disabled>
+                        <option>-- Pilih --</option>
+                        ${(field.options || '').split(',').map(opt => `<option>${opt.trim()}</option>`).join('')}
+                      </select>` :
+                      `<input type="${field.type}" class="w-full px-3 py-2 rounded-lg border border-orange-200 bg-white" disabled>`}
+                  </div>
+                `).join('')}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderAdminSiswa() {
+      const students = getStudents();
+      
+      return `
+        <div class="fade-in space-y-6">
+          <div>
+            <h1 class="text-2xl font-bold text-amber-800">👥 Data Siswa Pendaftar</h1>
+            <p class="text-amber-600">Daftar siswa yang telah mendaftar melalui aplikasi</p>
+          </div>
+          
+          <div class="pastel-card rounded-2xl p-6 shadow-lg overflow-x-auto">
+            <table class="w-full">
+              <thead>
+                <tr class="border-b-2 border-orange-200">
+                  <th class="px-4 py-3 text-left text-amber-800 font-bold">No</th>
+                  <th class="px-4 py-3 text-left text-amber-800 font-bold">Nama Siswa</th>
+                  <th class="px-4 py-3 text-left text-amber-800 font-bold">Kelas</th>
+                  <th class="px-4 py-3 text-left text-amber-800 font-bold">No. Absen</th>
+                  <th class="px-4 py-3 text-left text-amber-800 font-bold">WhatsApp</th>
+                  <th class="px-4 py-3 text-left text-amber-800 font-bold">Terdaftar</th>
+                  <th class="px-4 py-3 text-left text-amber-800 font-bold">Aksi</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${students.length === 0 ? `
+                  <tr><td colspan="7" class="px-4 py-8 text-center text-amber-600">Belum ada siswa yang mendaftar</td></tr>
+                ` : students.map((s, i) => `
+                  <tr class="border-b border-orange-100 hover:bg-white/50">
+                    <td class="px-4 py-3 text-amber-700">${i + 1}</td>
+                    <td class="px-4 py-3 text-amber-800 font-medium">${s.fullName}</td>
+                    <td class="px-4 py-3 text-amber-700">${s.className}</td>
+                    <td class="px-4 py-3 text-amber-700">${s.absentNumber}</td>
+                    <td class="px-4 py-3 text-amber-700">
+                      <a href="https://wa.me/${s.whatsappNumber.replace(/[^\d]/g, '')}" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:text-blue-800 underline">
+                        ${s.whatsappNumber}
+                      </a>
+                    </td>
+                    <td class="px-4 py-3 text-amber-600 text-sm">${formatDate(s.createdAt)}</td>
+                    <td class="px-4 py-3">
+                      <button onclick="confirmDeleteStudent('${s.__backendId}')" class="px-3 py-1 bg-red-100 text-red-600 rounded-lg text-sm hover:bg-red-200 transition">
+                        🗑️ Hapus
+                      </button>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderAdminLaporan() {
+      const reports = getReports();
+      
+      return `
+        <div class="fade-in space-y-6">
+          <div>
+            <h1 class="text-2xl font-bold text-amber-800">📑 Daftar Laporan Kasus</h1>
+            <p class="text-amber-600">Kelola semua laporan yang masuk dari siswa</p>
+          </div>
+          
+          <!-- Search & Filter -->
+          <div class="pastel-card rounded-2xl p-4 shadow-lg">
+            <div class="flex flex-wrap gap-4">
+              <div class="flex-1 min-w-48">
+                <input type="text" id="searchReport" placeholder="🔍 Cari nama siswa..." 
+                  onkeyup="filterReports()"
+                  class="w-full px-4 py-2 rounded-xl border border-orange-200 bg-white">
+              </div>
+              <div>
+                <select id="filterStatus" onchange="filterReports()" class="px-4 py-2 rounded-xl border border-orange-200 bg-white">
+                  <option value="">Semua Status</option>
+                  <option value="pending">Belum Ditangani</option>
+                  <option value="handled">Sudah Ditangani</option>
+                </select>
+              </div>
+              <div>
+                <select id="filterClass" onchange="filterReports()" class="px-4 py-2 rounded-xl border border-orange-200 bg-white">
+                  <option value="">Semua Kelas</option>
+                  <option value="X">Kelas X</option>
+                  <option value="XI">Kelas XI</option>
+                  <option value="XII">Kelas XII</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Reports Table -->
+          <div class="pastel-card rounded-2xl p-6 shadow-lg overflow-x-auto">
+            <table class="w-full" id="reportsTable">
+              <thead>
+                <tr class="border-b-2 border-orange-200">
+                  <th class="px-4 py-3 text-left text-amber-800 font-bold">No</th>
+                  <th class="px-4 py-3 text-left text-amber-800 font-bold">Pelapor</th>
+                  <th class="px-4 py-3 text-left text-amber-800 font-bold">Kelas</th>
+                  <th class="px-4 py-3 text-left text-amber-800 font-bold">Tanggal</th>
+                  <th class="px-4 py-3 text-left text-amber-800 font-bold">Status</th>
+                  <th class="px-4 py-3 text-left text-amber-800 font-bold">Aksi</th>
+                </tr>
+              </thead>
+              <tbody id="reportsBody">
+                ${renderReportsRows(reports)}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+        <!-- Report Detail Modal -->
+        <div id="reportModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50 p-4">
+          <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90%] overflow-auto">
+            <div id="reportModalContent"></div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderReportsRows(reports) {
+      if (reports.length === 0) {
+        return `<tr><td colspan="6" class="px-4 py-8 text-center text-amber-600">Belum ada laporan</td></tr>`;
+      }
+      
+      return reports.map((r, i) => `
+        <tr class="border-b border-orange-100 hover:bg-white/50 report-row" 
+            data-name="${(r.reporterName || '').toLowerCase()}"
+            data-class="${(r.reporterClass || '').toUpperCase()}"
+            data-status="${r.status === 'handled' ? 'handled' : 'pending'}">
+          <td class="px-4 py-3 text-amber-700">${i + 1}</td>
+          <td class="px-4 py-3 text-amber-800 font-medium">${r.reporterName || 'Anonim'}</td>
+          <td class="px-4 py-3 text-amber-700">${r.reporterClass || '-'}</td>
+          <td class="px-4 py-3 text-amber-600 text-sm">${formatDate(r.createdAt)}</td>
+          <td class="px-4 py-3">
+            <span class="px-3 py-1 rounded-full text-xs font-medium ${r.status === 'handled' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}">
+              ${r.status === 'handled' ? '✓ Ditangani' : '⏳ Pending'}
+            </span>
+          </td>
+          <td class="px-4 py-3">
+            <div class="flex flex-wrap gap-2">
+              <button onclick="viewReport('${r.__backendId}')" class="px-3 py-1 bg-blue-100 text-blue-600 rounded-lg text-sm hover:bg-blue-200 transition">
+                👁️ Lihat
+              </button>
+              <button onclick="printReport('${r.__backendId}')" class="px-3 py-1 bg-purple-100 text-purple-600 rounded-lg text-sm hover:bg-purple-200 transition">
+                🖨️ Cetak
+              </button>
+              <button onclick="toggleReportStatus('${r.__backendId}')" class="px-3 py-1 ${r.status === 'handled' ? 'bg-yellow-100 text-yellow-600' : 'bg-green-100 text-green-600'} rounded-lg text-sm hover:opacity-80 transition">
+                ${r.status === 'handled' ? '↩️ Batalkan' : '✓ Tangani'}
+              </button>
+            </div>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    function renderAdminPengaturan() {
+      const appsScriptCode = `// Apps Script Code untuk Sinkronisasi E-Kotak Kasus
+// Paste kode ini di Google Apps Script
+
+function doGet(e) {
+  return handleRequest(e);
+}
+
+function doPost(e) {
+  return handleRequest(e);
+}
+
+function handleRequest(e) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const action = e.parameter.action;
+  
+  if (action === 'getAll') {
+    return getAllData(sheet);
+  } else if (action === 'add') {
+    return addData(sheet, e.parameter);
+  }
+  
+  return ContentService.createTextOutput(JSON.stringify({success: false, error: 'Invalid action'}))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function getAllData(sheet) {
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+  const rows = data.slice(1).map(row => {
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = row[i]);
+    return obj;
+  });
+  
+  return ContentService.createTextOutput(JSON.stringify({success: true, data: rows}))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function addData(sheet, params) {
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const newRow = headers.map(h => params[h] || '');
+  sheet.appendRow(newRow);
+  
+  return ContentService.createTextOutput(JSON.stringify({success: true}))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+// Langkah-langkah:
+// 1. Buka Google Sheets baru
+// 2. Buat header: reporterName, reporterClass, reportData, createdAt, status, notes
+// 3. Extensions > Apps Script
+// 4. Paste kode ini
+// 5. Deploy > New deployment > Web app
+// 6. Execute as: Me, Access: Anyone
+// 7. Copy URL deployment`;
+
+      return `
+        <div class="fade-in space-y-6">
+          <div>
+            <h1 class="text-2xl font-bold text-amber-800">⚙️ Pengaturan</h1>
+            <p class="text-amber-600">Konfigurasi aplikasi E-Kotak Kasus</p>
+          </div>
+          
+          <!-- Institution Settings -->
+          <div class="pastel-card rounded-2xl p-6 shadow-lg">
+            <h3 class="font-bold text-amber-800 mb-4">🏫 Identitas Instansi</h3>
+            <div class="space-y-4">
+              <div>
+                <label class="block text-sm font-medium text-amber-700 mb-2">Nama Instansi</label>
+                <input type="text" id="settingInstitution" value="${settings.institutionName}"
+                  class="w-full px-4 py-3 rounded-xl border-2 border-orange-200 bg-white">
+              </div>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label class="block text-sm font-medium text-amber-700 mb-2">Nama Guru BK</label>
+                  <input type="text" id="settingTeacher" value="${settings.teacherName}"
+                    class="w-full px-4 py-3 rounded-xl border-2 border-orange-200 bg-white">
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-amber-700 mb-2">NIP</label>
+                  <input type="text" id="settingNip" value="${settings.teacherNip}"
+                    class="w-full px-4 py-3 rounded-xl border-2 border-orange-200 bg-white">
+                </div>
+              </div>
+              <button onclick="saveSettings()" class="px-6 py-3 pastel-btn rounded-xl font-semibold text-amber-800 shadow-lg hover:shadow-xl transition">
+                💾 Simpan Pengaturan
+              </button>
+            </div>
+          </div>
+          
+          <!-- Google Sheet Sync -->
+          <div class="pastel-card rounded-2xl p-6 shadow-lg">
+            <h3 class="font-bold text-amber-800 mb-4">📊 Sinkronisasi ke Google Sheet</h3>
+            <div class="mb-4 p-4 bg-blue-50 rounded-xl">
+              <h4 class="font-semibold text-blue-800 mb-2">📋 Panduan Sinkronisasi:</h4>
+              <ol class="list-decimal list-inside text-blue-700 space-y-1 text-sm">
+                <li>Buka <a href="https://sheets.google.com" target="_blank" rel="noopener noreferrer" class="underline">Google Sheets</a> dan buat spreadsheet baru</li>
+                <li>Buat header kolom: reporterName, reporterClass, reportData, createdAt, status, notes</li>
+                <li>Buka menu Extensions > Apps Script</li>
+                <li>Hapus kode default dan paste kode di bawah</li>
+                <li>Klik Deploy > New deployment</li>
+                <li>Pilih Type: Web app</li>
+                <li>Execute as: Me, Access: Anyone</li>
+                <li>Copy URL deployment untuk digunakan</li>
+              </ol>
+            </div>
+            
+            <div class="relative">
+              <label class="block text-sm font-medium text-amber-700 mb-2">Kode Apps Script</label>
+              <textarea id="appsScriptCode" readonly rows="20" 
+                class="w-full px-4 py-3 rounded-xl border-2 border-orange-200 bg-gray-50 font-mono text-xs">${appsScriptCode}</textarea>
+              <button onclick="copyAppsScript()" class="absolute top-10 right-4 px-3 py-1 bg-orange-100 text-orange-700 rounded-lg text-sm hover:bg-orange-200 transition">
+                📋 Copy
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderStudentDashboard() {
+      return `
+        <div class="flex h-full">
+          <!-- Sidebar -->
+          <div class="w-64 pastel-sidebar shadow-xl flex flex-col">
+            <div class="p-6 border-b border-orange-300/50">
+              <div class="flex items-center gap-3">
+                <div class="w-12 h-12 rounded-full bg-white/80 flex items-center justify-center shadow">
+                  <span class="text-2xl">🎓</span>
+                </div>
+                <div>
+                  <h2 class="font-bold text-amber-800 truncate">${currentUser.fullName}</h2>
+                  <p class="text-xs text-amber-600">${currentUser.className}</p>
+                </div>
+              </div>
+            </div>
+            
+            <nav class="flex-1 p-4 space-y-2">
+              ${renderStudentMenuItem('beranda', '🏠', 'Beranda')}
+              ${renderStudentMenuItem('laporan', '📝', 'Input Laporan')}
+            </nav>
+            
+            <div class="p-4 border-t border-orange-300/50">
+              <button onclick="handleLogout()" class="w-full py-2 bg-white/50 rounded-xl text-amber-700 font-medium hover:bg-white/80 transition">
+                🚪 Keluar
+              </button>
+            </div>
+          </div>
+          
+          <!-- Main Content -->
+          <div class="flex-1 overflow-auto p-6">
+            ${renderStudentContent()}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderStudentMenuItem(id, icon, label) {
+      const isActive = studentMenu === id;
+      return `
+        <button onclick="studentMenu='${id}'; renderCurrentView();" 
+          class="w-full flex items-center gap-3 px-4 py-3 rounded-xl transition ${isActive ? 'bg-white/80 shadow-lg text-amber-800' : 'text-amber-700 hover:bg-white/50'}">
+          <span class="text-lg">${icon}</span>
+          <span class="font-medium">${label}</span>
+        </button>
+      `;
+    }
+
+    function renderStudentContent() {
+      switch (studentMenu) {
+        case 'beranda': return renderStudentBeranda();
+        case 'laporan': return renderStudentLaporan();
+        default: return renderStudentBeranda();
+      }
+    }
+
+    function renderStudentBeranda() {
+      return `
+        <div class="fade-in space-y-6 max-w-3xl mx-auto">
+          <div class="text-center">
+            <div class="w-24 h-24 mx-auto mb-4 rounded-full pastel-gradient flex items-center justify-center shadow-xl">
+              <span class="text-4xl">📮</span>
+            </div>
+            <h1 class="text-2xl font-bold text-amber-800">Selamat Datang, ${currentUser.fullName}! 👋</h1>
+            <p class="text-amber-600 mt-2">Layanan Bimbingan & Konseling ${settings.institutionName}</p>
+          </div>
+          
+          <!-- About BK -->
+          <div class="pastel-card rounded-2xl p-6 shadow-lg">
+            <h3 class="font-bold text-amber-800 mb-3 flex items-center gap-2">
+              <span>💡</span> Apa itu Layanan BK?
+            </h3>
+            <p class="text-amber-700 leading-relaxed">
+              <strong>Bimbingan dan Konseling (BK)</strong> adalah layanan bantuan untuk siswa dalam mengembangkan 
+              kehidupan pribadi, sosial, belajar, dan karir. Guru BK siap membantu kamu mengatasi berbagai 
+              permasalahan yang dihadapi di sekolah maupun di luar sekolah.
+            </p>
+          </div>
+          
+          <!-- About E-Kotak Kasus -->
+          <div class="pastel-card rounded-2xl p-6 shadow-lg">
+            <h3 class="font-bold text-amber-800 mb-3 flex items-center gap-2">
+              <span>📮</span> Tentang E-Kotak Kasus
+            </h3>
+            <p class="text-amber-700 leading-relaxed mb-4">
+              <strong>E-Kotak Kasus</strong> adalah kotak digital untuk melaporkan berbagai permasalahan yang kamu alami 
+              atau ketahui. Melalui aplikasi ini, kamu bisa menyampaikan laporan kepada Guru BK dengan mudah dan aman.
+            </p>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="p-4 bg-green-50 rounded-xl">
+                <h4 class="font-semibold text-green-800 mb-2">✅ Maksud</h4>
+                <p class="text-green-700 text-sm">Menyediakan sarana pelaporan yang mudah diakses dan aman bagi siswa</p>
+              </div>
+              <div class="p-4 bg-blue-50 rounded-xl">
+                <h4 class="font-semibold text-blue-800 mb-2">🎯 Tujuan</h4>
+                <p class="text-blue-700 text-sm">Membantu siswa menyelesaikan permasalahan dengan pendampingan Guru BK</p>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Privacy Notice -->
+          <div class="pastel-card rounded-2xl p-6 shadow-lg border-2 border-green-200 bg-gradient-to-r from-green-50 to-teal-50">
+            <h3 class="font-bold text-green-800 mb-3 flex items-center gap-2">
+              <span>🔒</span> Jaminan Kerahasiaan
+            </h3>
+            <div class="space-y-3 text-green-700">
+              <p class="flex items-start gap-2">
+                <span class="text-green-500">✓</span>
+                <span>Semua laporan yang kamu kirim akan <strong>DIJAGA KERAHASIAANNYA</strong></span>
+              </p>
+              <p class="flex items-start gap-2">
+                <span class="text-green-500">✓</span>
+                <span>Hanya Guru BK yang dapat melihat dan menangani laporanmu</span>
+              </p>
+              <p class="flex items-start gap-2">
+                <span class="text-green-500">✓</span>
+                <span>Identitasmu tidak akan disebarluaskan kepada pihak lain</span>
+              </p>
+              <p class="flex items-start gap-2">
+                <span class="text-green-500">✓</span>
+                <span>Kamu tidak perlu takut untuk menceritakan masalahmu</span>
+              </p>
+            </div>
+          </div>
+          
+          <!-- CTA -->
+          <div class="text-center">
+            <button onclick="studentMenu='laporan'; renderCurrentView();" 
+              class="px-8 py-4 pastel-btn rounded-2xl font-bold text-amber-800 shadow-xl hover:shadow-2xl transform hover:-translate-y-1 transition-all text-lg">
+              📝 Buat Laporan Sekarang
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderStudentLaporan() {
+      loadTemplate();
+      
+      if (formTemplate.length === 0) {
+        return `
+          <div class="fade-in max-w-2xl mx-auto">
+            <div class="pastel-card rounded-2xl p-8 shadow-lg text-center">
+              <span class="text-6xl mb-4 block">📋</span>
+              <h2 class="text-xl font-bold text-amber-800 mb-2">Form Belum Tersedia</h2>
+              <p class="text-amber-600">Guru BK belum membuat template form laporan. Silakan hubungi Guru BK untuk informasi lebih lanjut.</p>
+            </div>
+          </div>
+        `;
+      }
+
+      return `
+        <div class="fade-in max-w-2xl mx-auto space-y-6">
+          <div class="text-center">
+            <h1 class="text-2xl font-bold text-amber-800">📝 Form Laporan Kasus</h1>
+            <p class="text-amber-600">Isi form dengan jujur dan lengkap</p>
+          </div>
+          
+          <div class="pastel-card rounded-2xl p-6 shadow-lg">
+            <form id="reportForm" onsubmit="submitReport(event)" class="space-y-4">
+              ${formTemplate.map((field, index) => `
+                <div>
+                  <label class="block text-sm font-medium text-amber-700 mb-2">
+                    ${field.label} ${field.required ? '<span class="text-red-500">*</span>' : ''}
+                  </label>
+                  ${field.type === 'textarea' ? 
+                    `<textarea name="field_${index}" ${field.required ? 'required' : ''} rows="4"
+                      class="w-full px-4 py-3 rounded-xl border-2 border-orange-200 bg-white focus:border-orange-400 transition"
+                      placeholder="Tuliskan di sini..."></textarea>` :
+                  field.type === 'select' ?
+                    `<select name="field_${index}" ${field.required ? 'required' : ''}
+                      class="w-full px-4 py-3 rounded-xl border-2 border-orange-200 bg-white focus:border-orange-400 transition">
+                      <option value="">-- Pilih --</option>
+                      ${(field.options || '').split(',').map(opt => `<option value="${opt.trim()}">${opt.trim()}</option>`).join('')}
+                    </select>` :
+                    `<input type="${field.type}" name="field_${index}" ${field.required ? 'required' : ''}
+                      class="w-full px-4 py-3 rounded-xl border-2 border-orange-200 bg-white focus:border-orange-400 transition"
+                      placeholder="Masukkan ${field.label.toLowerCase()}">`}
+                </div>
+              `).join('')}
+              
+              <div class="pt-4">
+                <button type="submit" id="submitBtn" class="w-full py-4 pastel-btn rounded-xl font-bold text-amber-800 shadow-lg hover:shadow-xl transition-all">
+                  📤 Kirim Laporan
+                </button>
+              </div>
+            </form>
+          </div>
+          
+          <div class="pastel-card rounded-2xl p-4 shadow-lg bg-gradient-to-r from-green-50 to-teal-50">
+            <p class="text-green-700 text-sm text-center flex items-center justify-center gap-2">
+              <span>🔒</span> Laporanmu akan dijaga kerahasiaannya oleh Guru BK
+            </p>
+          </div>
+        </div>
+      `;
+    }
+
+    // Event Handlers
+    async function handleLogin() {
+      const username = document.getElementById('loginUsername').value.trim();
+      const password = document.getElementById('loginPassword').value;
+
+      if (!username || !password) {
+        showToast('Mohon isi username dan password', 'error');
+        return;
+      }
+
+      // Admin login
+      if (username === 'admin' && password === 'admin123') {
+        currentUser = { role: 'admin', username: 'admin' };
+        currentView = 'admin';
+        await logActivity('Admin login');
+        renderCurrentView();
+        return;
+      }
+
+      // Student login
+      const student = allData.find(d => d.type === 'student' && d.username === username && d.password === password);
+      if (student) {
+        currentUser = student;
+        currentView = 'student';
+        await logActivity(`Siswa ${student.fullName} login`);
+        renderCurrentView();
+        return;
+      }
+
+      showToast('Username atau password salah', 'error');
+    }
+
+    async function handleRegister() {
+      const fullName = document.getElementById('regFullName').value.trim();
+      const className = document.getElementById('regClass').value;
+      const absentNumber = document.getElementById('regAbsent').value;
+      const whatsappNumber = document.getElementById('regWhatsapp').value.trim();
+      const username = document.getElementById('regUsername').value.trim();
+      const password = document.getElementById('regPassword').value;
+
+      if (!fullName || !className || !absentNumber || !whatsappNumber || !username || !password) {
+        showToast('Mohon lengkapi semua data', 'error');
+        return;
+      }
+
+      if (password.length < 6) {
+        showToast('Password minimal 6 karakter', 'error');
+        return;
+      }
+
+      if (!/^(\+62|62|0)?[0-9]{9,12}$/.test(whatsappNumber.replace(/[^\d]/g, ''))) {
+        showToast('Nomor WhatsApp tidak valid', 'error');
+        return;
+      }
+
+      const existingUser = allData.find(d => d.type === 'student' && d.username === username);
+      if (existingUser) {
+        showToast('Username sudah digunakan', 'error');
+        return;
+      }
+
+      if (allData.length >= 999) {
+        showToast('Kapasitas data penuh', 'error');
+        return;
+      }
+
+      const result = await window.dataSdk.create({
+        type: 'student',
+        fullName,
+        className,
+        absentNumber,
+        whatsappNumber,
+        username,
+        password,
+        role: 'student',
+        createdAt: new Date().toISOString()
+      });
+
+      if (result.isOk) {
+        await logActivity(`Siswa baru mendaftar: ${fullName}`);
+        showToast('Pendaftaran berhasil! Silakan login');
+        currentView = 'login';
+        renderCurrentView();
+      } else {
+        showToast('Gagal mendaftar', 'error');
+      }
+    }
+
+    function handleLogout() {
+      currentUser = null;
+      currentView = 'login';
+      adminMenu = 'beranda';
+      studentMenu = 'beranda';
+      renderCurrentView();
+    }
+
+    // Template Functions
+    function addTemplateField() {
+      formTemplate.push({
+        label: 'Field Baru',
+        type: 'text',
+        options: '',
+        required: false
+      });
+      renderCurrentView();
+    }
+
+    function updateTemplateField(index, key, value) {
+      formTemplate[index][key] = value;
+      if (key === 'type' && value !== 'select') {
+        formTemplate[index].options = '';
+      }
+      renderCurrentView();
+    }
+
+    function removeTemplateField(index) {
+      formTemplate.splice(index, 1);
+      renderCurrentView();
+    }
+
+    async function saveTemplate() {
+      const existingTemplate = allData.find(d => d.type === 'template');
+      
+      if (existingTemplate) {
+        const result = await window.dataSdk.update({
+          ...existingTemplate,
+          templateFields: JSON.stringify(formTemplate)
+        });
+        if (result.isOk) {
+          await logActivity('Template form diperbarui');
+          showToast('Template berhasil disimpan');
+        }
+      } else {
+        if (allData.length >= 999) {
+          showToast('Kapasitas data penuh', 'error');
+          return;
+        }
+        const result = await window.dataSdk.create({
+          type: 'template',
+          templateFields: JSON.stringify(formTemplate),
+          createdAt: new Date().toISOString()
+        });
+        if (result.isOk) {
+          await logActivity('Template form dibuat');
+          showToast('Template berhasil disimpan');
+        }
+      }
+    }
+
+    // Report Functions
+    async function submitReport(e) {
+      e.preventDefault();
+      const form = e.target;
+      const submitBtn = document.getElementById('submitBtn');
+      
+      submitBtn.disabled = true;
+      submitBtn.textContent = '⏳ Mengirim...';
+
+      const reportData = {};
+      formTemplate.forEach((field, index) => {
+        const input = form.querySelector(`[name="field_${index}"]`);
+        reportData[field.label] = input ? input.value : '';
+      });
+
+      if (allData.length >= 999) {
+        showToast('Kapasitas data penuh', 'error');
+        submitBtn.disabled = false;
+        submitBtn.textContent = '📤 Kirim Laporan';
+        return;
+      }
+
+      const result = await window.dataSdk.create({
+        type: 'report',
+        reporterId: currentUser.__backendId,
+        reporterName: currentUser.fullName,
+        reporterClass: currentUser.className,
+        reportData: JSON.stringify(reportData),
+        status: 'pending',
+        notes: '',
+        createdAt: new Date().toISOString()
+      });
+
+      if (result.isOk) {
+        await logActivity(`Laporan baru dari ${currentUser.fullName}`);
+        showToast('Laporan berhasil dikirim!');
+        form.reset();
+      } else {
+        showToast('Gagal mengirim laporan', 'error');
+      }
+
+      submitBtn.disabled = false;
+      submitBtn.textContent = '📤 Kirim Laporan';
+    }
+
+    function filterReports() {
+      const search = document.getElementById('searchReport').value.toLowerCase();
+      const status = document.getElementById('filterStatus').value;
+      const classFilter = document.getElementById('filterClass').value;
+      
+      document.querySelectorAll('.report-row').forEach(row => {
+        const name = row.dataset.name;
+        const rowClass = row.dataset.class;
+        const rowStatus = row.dataset.status;
+        
+        const matchSearch = !search || name.includes(search);
+        const matchStatus = !status || rowStatus === status;
+        const matchClass = !classFilter || rowClass.includes(classFilter);
+        
+        row.style.display = matchSearch && matchStatus && matchClass ? '' : 'none';
+      });
+    }
+
+    function viewReport(id) {
+      const report = allData.find(d => d.__backendId === id);
+      if (!report) return;
+
+      let reportDataParsed = {};
+      try {
+        reportDataParsed = JSON.parse(report.reportData);
+      } catch (e) {}
+
+      const modal = document.getElementById('reportModal');
+      const content = document.getElementById('reportModalContent');
+      
+      content.innerHTML = `
+        <div class="p-6">
+          <div class="flex items-center justify-between mb-6">
+            <h2 class="text-xl font-bold text-amber-800">📋 Detail Laporan</h2>
+            <button onclick="closeReportModal()" class="text-gray-400 hover:text-gray-600 text-2xl">&times;</button>
+          </div>
+          
+          <div class="space-y-4">
+            <div class="grid grid-cols-2 gap-4 p-4 bg-orange-50 rounded-xl">
+              <div>
+                <p class="text-sm text-amber-600">Pelapor</p>
+                <p class="font-semibold text-amber-800">${report.reporterName || 'Anonim'}</p>
+              </div>
+              <div>
+                <p class="text-sm text-amber-600">Kelas</p>
+                <p class="font-semibold text-amber-800">${report.reporterClass || '-'}</p>
+              </div>
+              <div>
+                <p class="text-sm text-amber-600">Tanggal</p>
+                <p class="font-semibold text-amber-800">${formatDate(report.createdAt)}</p>
+              </div>
+              <div>
+                <p class="text-sm text-amber-600">Status</p>
+                <span class="px-3 py-1 rounded-full text-xs font-medium ${report.status === 'handled' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}">
+                  ${report.status === 'handled' ? '✓ Ditangani' : '⏳ Pending'}
+                </span>
+              </div>
+            </div>
+            
+            <div class="p-4 bg-white rounded-xl border border-orange-200">
+              <h3 class="font-semibold text-amber-800 mb-3">📝 Isi Laporan</h3>
+              ${Object.entries(reportDataParsed).map(([key, value]) => `
+                <div class="mb-3">
+                  <p class="text-sm text-amber-600">${key}</p>
+                  <p class="text-amber-800">${value || '-'}</p>
+                </div>
+              `).join('')}
+            </div>
+            
+            <div>
+              <label class="block text-sm font-medium text-amber-700 mb-2">📌 Catatan Guru BK</label>
+              <textarea id="reportNotes" rows="3" class="w-full px-4 py-3 rounded-xl border-2 border-orange-200"
+                placeholder="Tambahkan catatan...">${report.notes || ''}</textarea>
+            </div>
+            
+            <div class="flex gap-3">
+              <button onclick="saveReportNotes('${report.__backendId}')" class="flex-1 py-3 pastel-btn rounded-xl font-semibold text-amber-800">
+                💾 Simpan Catatan
+              </button>
+              <button onclick="closeReportModal()" class="px-6 py-3 bg-gray-100 rounded-xl font-medium text-gray-600 hover:bg-gray-200">
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+      
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+    }
+
+    function closeReportModal() {
+      const modal = document.getElementById('reportModal');
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+    }
+
+    async function saveReportNotes(id) {
+      const report = allData.find(d => d.__backendId === id);
+      if (!report) return;
+
+      const notes = document.getElementById('reportNotes').value;
+      
+      const result = await window.dataSdk.update({
+        ...report,
+        notes
+      });
+
+      if (result.isOk) {
+        showToast('Catatan berhasil disimpan');
+        closeReportModal();
+      } else {
+        showToast('Gagal menyimpan catatan', 'error');
+      }
+    }
+
+    async function toggleReportStatus(id) {
+      const report = allData.find(d => d.__backendId === id);
+      if (!report) return;
+
+      const newStatus = report.status === 'handled' ? 'pending' : 'handled';
+      
+      const result = await window.dataSdk.update({
+        ...report,
+        status: newStatus
+      });
+
+      if (result.isOk) {
+        await logActivity(`Laporan ${report.reporterName} ${newStatus === 'handled' ? 'ditangani' : 'dibatalkan'}`);
+        showToast(`Status berhasil diubah`);
+      } else {
+        showToast('Gagal mengubah status', 'error');
+      }
+    }
+
+    function printReport(id) {
+      const report = allData.find(d => d.__backendId === id);
+      if (!report) return;
+
+      let reportDataParsed = {};
+      try {
+        reportDataParsed = JSON.parse(report.reportData);
+      } catch (e) {}
+
+      const printContent = `
+        <div style="font-family: 'Quicksand', Arial, sans-serif; padding: 40px; max-width: 800px; margin: 0 auto;">
+          <div style="text-align: center; margin-bottom: 30px; border-bottom: 3px solid #fcb69f; padding-bottom: 20px;">
+            <h1 style="color: #92400e; margin: 0; font-size: 24px;">KARTU LAPORAN KASUS</h1>
+            <h2 style="color: #b45309; margin: 10px 0; font-size: 18px;">${settings.institutionName}</h2>
+            <p style="color: #78716c; margin: 0;">Layanan Bimbingan dan Konseling</p>
+          </div>
+          
+          <table style="width: 100%; margin-bottom: 20px; border-collapse: collapse;">
+            <tr>
+              <td style="padding: 8px 0; width: 150px; color: #78716c;">Nama Pelapor</td>
+              <td style="padding: 8px 0;">: <strong>${report.reporterName || 'Anonim'}</strong></td>
+            </tr>
+            <tr>
+              <td style="padding: 8px 0; color: #78716c;">Kelas</td>
+              <td style="padding: 8px 0;">: <strong>${report.reporterClass || '-'}</strong></td>
+            </tr>
+            <tr>
+              <td style="padding: 8px 0; color: #78716c;">Tanggal Laporan</td>
+              <td style="padding: 8px 0;">: <strong>${formatDate(report.createdAt)}</strong></td>
+            </tr>
+            <tr>
+              <td style="padding: 8px 0; color: #78716c;">Status</td>
+              <td style="padding: 8px 0;">: <strong>${report.status === 'handled' ? '✓ Sudah Ditangani' : '⏳ Belum Ditangani'}</strong></td>
+            </tr>
+          </table>
+          
+          <div style="background: #fef3c7; padding: 20px; border-radius: 10px; margin-bottom: 20px;">
+            <h3 style="color: #92400e; margin: 0 0 15px 0; font-size: 16px;">ISI LAPORAN</h3>
+            ${Object.entries(reportDataParsed).map(([key, value]) => `
+              <div style="margin-bottom: 12px;">
+                <p style="color: #78716c; margin: 0 0 4px 0; font-size: 12px;">${key}</p>
+                <p style="color: #1c1917; margin: 0;">${value || '-'}</p>
+              </div>
+            `).join('')}
+          </div>
+          
+          ${report.notes ? `
+            <div style="background: #ecfdf5; padding: 20px; border-radius: 10px; margin-bottom: 20px;">
+              <h3 style="color: #065f46; margin: 0 0 10px 0; font-size: 16px;">CATATAN GURU BK</h3>
+              <p style="color: #1c1917; margin: 0;">${report.notes}</p>
+            </div>
+          ` : ''}
+          
+          <div style="margin-top: 40px; display: flex; justify-content: flex-end;">
+            <div style="text-align: center;">
+              <p style="margin: 0; color: #78716c;">Guru BK,</p>
+              <div style="height: 60px;"></div>
+              <p style="margin: 0; font-weight: bold; color: #1c1917;">${settings.teacherName}</p>
+              <p style="margin: 0; color: #78716c;">NIP. ${settings.teacherNip}</p>
+            </div>
+          </div>
+          
+          <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; text-align: center;">
+            <p style="color: #9ca3af; font-size: 11px; margin: 0;">
+              Dokumen ini bersifat RAHASIA. Dicetak dari E-Kotak Kasus pada ${new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+            </p>
+          </div>
+        </div>
+      `;
+
+      const element = document.createElement('div');
+      element.innerHTML = printContent;
+      document.body.appendChild(element);
+
+      const opt = {
+        margin: 10,
+        filename: `Laporan_${report.reporterName || 'Anonim'}_${new Date().toISOString().split('T')[0]}.pdf`,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2 },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      };
+
+      html2pdf().set(opt).from(element).save().then(() => {
+        document.body.removeChild(element);
+        showToast('PDF berhasil diunduh');
+      });
+    }
+
+    // Settings Functions
+    async function saveSettings() {
+      const institutionName = document.getElementById('settingInstitution').value.trim();
+      const teacherName = document.getElementById('settingTeacher').value.trim();
+      const teacherNip = document.getElementById('settingNip').value.trim();
+
+      const existingSettings = allData.find(d => d.type === 'settings');
+
+      if (existingSettings) {
+        const result = await window.dataSdk.update({
+          ...existingSettings,
+          institutionName,
+          teacherName,
+          teacherNip
+        });
+        if (result.isOk) {
+          settings = { institutionName, teacherName, teacherNip };
+          await logActivity('Pengaturan diperbarui');
+          showToast('Pengaturan berhasil disimpan');
+        }
+      } else {
+        if (allData.length >= 999) {
+          showToast('Kapasitas data penuh', 'error');
+          return;
+        }
+        const result = await window.dataSdk.create({
+          type: 'settings',
+          institutionName,
+          teacherName,
+          teacherNip,
+          createdAt: new Date().toISOString()
+        });
+        if (result.isOk) {
+          settings = { institutionName, teacherName, teacherNip };
+          await logActivity('Pengaturan dibuat');
+          showToast('Pengaturan berhasil disimpan');
+        }
+      }
+    }
+
+    function copyAppsScript() {
+      const code = document.getElementById('appsScriptCode').value;
+      navigator.clipboard.writeText(code).then(() => {
+        showToast('Kode berhasil disalin!');
+      });
+    }
+
+    // Delete Functions
+    let deleteConfirmId = null;
+    let deleteConfirmType = null;
+
+    function confirmDeleteStudent(id) {
+      const student = allData.find(d => d.__backendId === id);
+      if (!student) return;
+      
+      const row = document.querySelector(`button[onclick="confirmDeleteStudent('${id}')"]`).closest('tr');
+      const cell = row.querySelector('td:last-child');
+      
+      cell.innerHTML = `
+        <div class="flex gap-2">
+          <button onclick="executeDeleteStudent('${id}')" class="px-3 py-1 bg-red-500 text-white rounded-lg text-sm hover:bg-red-600 transition">
+            ✓ Yakin
+          </button>
+          <button onclick="renderCurrentView()" class="px-3 py-1 bg-gray-200 text-gray-600 rounded-lg text-sm hover:bg-gray-300 transition">
+            Batal
+          </button>
+        </div>
+      `;
+    }
+
+    async function executeDeleteStudent(id) {
+      const student = allData.find(d => d.__backendId === id);
+      if (!student) return;
+
+      const result = await window.dataSdk.delete(student);
+      if (result.isOk) {
+        await logActivity(`Siswa ${student.fullName} dihapus`);
+        showToast('Siswa berhasil dihapus');
+      } else {
+        showToast('Gagal menghapus siswa', 'error');
+      }
+    }
+
+    // Initialize
+    initApp();
+  </script>
+ <script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'9d1fad8c30fb2df8',t:'MTc3MTc3NTgzMy4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>
